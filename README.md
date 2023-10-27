@@ -36,24 +36,24 @@ The pipeline runs using Snakemake, using inputs from the config.yaml.
 
 ```
 params:
-  reads_dir: "/hpcdata/lpd_sg/mchung/steph_banakis_01/reads/"
-  output: "/hpcdata/lpd_sg/mchung/steph_banakis_01/pipeline_output/"
+  reads_dir: "~/reads/"
+  output: "~/pipeline_output/"
   min_MAG_bp_size: "500"
 
 bin:
   clustalone: /sysapps/cluster/software/Anaconda3/2022.05/envs/vContact2-0.11.3/bin
-  fmap: /hpcdata/lpd_sg/mchung/leopoldo_segal_01/db/FMAP
-  krakentools: /hpcdata/lpd_sg/mchung/packages/KrakenTools_v1.2
-  scripts: /hpcdata/lpd_sg/mchung/pipelines/SGSlab_metagenomics/scripts
+  fmap: ~/db/FMAP
+  krakentools: ~/packages/KrakenTools_v1.2
+  scripts: ~/pipelines/SGSlab_metagenomics/scripts
 ref:
-  host_ref: /hpcdata/lpd_sg/reference_files/mouse/GCF_000001635.27_GRCm39_genomic.fna
-  card_db: /hpcdata/lpd_sg/mchung/pipelines/SGSlab_metagenomics/references/card/nucleotide_fasta_protein_variant_model.fasta
-  humann_db: /hpcdata/lpd_sg/mchung/pipelines/SGSlab_metagenomics/references/humann
-  kraken2_db: /hpcdata/lpd_sg/mchung/databases/kraken2/20220616_hbvae
-  iphop_db: /hpcdata/bio_data/iphop/Sept_2021_pub_rw
-  megares_db: /hpcdata/lpd_sg/mchung/abdoulie_bojang_02/references/megares_full_database_v2.00.fasta
-  metaphlan_db: /hpcdata/lpd_sg/mchung/pipelines/SGSlab_metagenomics/references/metaphlan/mpa_vOct22_CHOCOPhlAnSGB_202212
-  viral_nt_db: /hpcdata/lpd_sg/mchung/databases/blast_db/viral.1.1.genomic.fna
+  host_ref: ~/reference_files/mouse/GCF_000001635.27_GRCm39_genomic.fna
+  card_db: ~/databases/SGSlab_metagenomics/references/card/nucleotide_fasta_protein_variant_model.fasta
+  humann_db: ~/databases/SGSlab_metagenomics/references/humann
+  kraken2_db: ~/databases/kraken2/20220616_hbvae
+  iphop_db: ~/databases/iphop/Sept_2021_pub_rw
+  megares_db: ~/databases/megares_full_database_v2.00.fasta
+  metaphlan_db: ~/databases/SGSlab_metagenomics/references/metaphlan/mpa_vOct22_CHOCOPhlAnSGB_202212
+  viral_nt_db: ~/databases/blast_db/viral.1.1.genomic.fna
 ```
 
 Under params, the user needs to supply (1) the input directory containing the raw reads for the metagenomics/metatranscriptomics project, (2) an output directory, and (3) the minimum MAG size to be used for downstream MAG-based analyises (recommended 1000 bp for metagenomics studies and 500 bp for metatranscriptomics studies).  
