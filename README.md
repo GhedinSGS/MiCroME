@@ -33,7 +33,9 @@ The **downstream** portion leverages these processed FASTQ files, in conjunction
 
 ## Upstream Analysis
 
-[![image](https://github.com/GhedinSGS/SGSlab_metagenomics/assets/29619358/12df628d-ddd5-47b2-bcef-fab0a922fbd0)](https://github.com/GhedinSGS/SGSlab_metagenomics/assets/29619358/12df628d-ddd5-47b2-bcef-fab0a922fbd0)
+<div align="center">
+    <img src="https://github.com/user-attachments/assets/7556bf23-1ce4-46a0-99cc-05bbc8e16530" alt="MiCroME">
+</div>
 
 ### Workflow
 
@@ -85,7 +87,9 @@ The upstream pipeline generates the following output files:
 
 ## Downstream Analysis
 
-[![image](https://github.com/GhedinSGS/SGSlab_metagenomics/assets/29619358/12df628d-ddd5-47b2-bcef-fab0a922fbd0)](https://github.com/GhedinSGS/SGSlab_metagenomics/assets/29619358/12df628d-ddd5-47b2-bcef-fab0a922fbd0)
+<div align="center">
+    <img src="https://github.com/user-attachments/assets/1e62e01b-cbec-4fa2-a368-4d21c92a645f" alt="MiCroME">
+</div>
 
 ### Workflow
 
