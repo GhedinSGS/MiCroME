@@ -1,90 +1,200 @@
-# SGS Lab Metagenomics Analysis Pipeline
+# MiCroME: Microbial Community Meta-omics Exploration
 
-![image](https://github.com/GhedinSGS/SGSlab_metagenomics/assets/29619358/12df628d-ddd5-47b2-bcef-fab0a922fbd0)
+<div align="center">
+    <img src="https://github.com/GhedinSGS/.github/blob/main/figures/microme.png" alt="MiCroME" width="500" style="width: 50%;">
+</div>
 
 ## Overview
-The SGS lab metagenomics analysis pipeline is a comprehensive Snakemake pipeline for short paierd-end read metagenomics and metatranscriptomics datasets. The pipeline includes the following steps:
 
-1. **Upstream processing**  
-  a. Adaptor trimming, removal of low quality positions, and PCR duplicates using *fastp*  
-  b. Mapping-based depletion of host reads using *Bowtie2*  
-  c. Additional depletion of human reads using *Kraken2* and *KrakenTools*  
-2. **Read-level taxonomic identification and quantification**   
-  a. Taxonomic identification and quantification of reads using *Kraken2* and *Bracken* 
-3. **Read-level functional annotation and quantification**  
-  a. Functional annotation of reads at the KEGG orthology pathway, module, and ortholog level using *FMAP*  
-  b. Quantification of antimicrobial resistance genes present in the CARD and MEGARes databases using *CoverM*  
-  c. Assembly of metagenome-assembled genomes (MAGs) from processed paired-end reads using *metaSPAdes*  
-4. **General in-depth analysis of MAGs**  
-  a. Taxonomic identification of MAGs using *Kraken2*  
-  b. Annotation of antimicrobial resistance genes in MAGs using *AMRFinderPlus*  
-  c. Bacterial-specific taxonomic identification of MAGs using *VAMB* and *GTDB-tk*  
-  d. Quantification of MAGs using *coverM*  
-  e. Identification of CRISPR repeats and spacers using *PILER-CR* and *MetaCRAST*  
-5. **Viral-specific analysis of MAGs**  
-  a. Identification of both DNA and RNA viral genomes in MAGs using *VirSorter2*  
-  b. Assesss quality and remove host regions for viral MAGs using *CheckV*  
-  c. Quantification of viral MAGs using *coverM*  
-  d. Annotation of protein-coding genes in viralMAGs using *Prodigal*  
-  e. Annotation of viral-specific antimicrobial genes using *DRAM-v*
-  f. Identification of bacterial hosts for prophage sequences using *iPHoP*  
-  f. Taxonomic identification of viral MAGs using *BLASTn* against viral RefSeq and *vConTACT2*  
+MiCroME is a comprehensive [Snakemake](https://snakemake.readthedocs.io/en/stable/) pipeline designed for the processing and initial exploration of short Illumina paired-end read metagenomics and metatranscriptomics datasets. This pipeline is divided into two distinct modules: **Upstream Analysis** and **Downstream Analysis**.
 
-## Usage
+The **upstream** portion takes raw paired-end reads as input and performs crucial initial steps, including quality control, host read removal, and the quantification of general taxa and functional terms. The final outputs of this stage are count tables for both taxa and functional terms, along with fully processed paired-end FASTQ files.
 
-The pipeline runs using Snakemake, using inputs from the config.yaml. 
+The **downstream** portion leverages these processed FASTQ files, in conjunction with a FASTA file of assembled metagenome-assembled genomes (MAGs), to enable more specific and in-depth downstream analyses. This allows researchers to address targeted scientific questions including characterize the abundance and diversity of antimicrobial resistance genes and identifying potential novel viruses.
 
-```
+## Table of Contents
+<!-- MarkdownTOC autolink="true" -->
+
+- [Upstream Analysis](#upstream-analysis)
+    - [Workflow](#workflow)
+    - [Usage](#usage)
+    - [Output](#output)
+- [Downstream Analysis](#downstream-analysis)
+    - [Workflow](#workflow-1)
+        - [MAG: General MAG Characterization](#mag-general-mag-characterization)
+        - [AMR: Antimicrobial Resistance Characterization](#amr-antimicrobial-resistance-characterization)
+        - [VirD: Viral Discovery and Annotation](#vird-viral-discovery-and-annotation)
+    - [Usage](#usage-1)
+    - [Output](#output-1)
+- [Credits](#credits)
+- [Citations](#citations)
+
+<!-- /MarkdownTOC -->
+
+## Upstream Analysis
+
+[![image](https://github.com/GhedinSGS/SGSlab_metagenomics/assets/29619358/12df628d-ddd5-47b2-bcef-fab0a922fbd0)](https://github.com/GhedinSGS/SGSlab_metagenomics/assets/29619358/12df628d-ddd5-47b2-bcef-fab0a922fbd0)
+
+### Workflow
+
+The upstream portion of the pipeline encompasses the following key steps:
+
+1.  **Read Processing:**
+    * Adaptor trimming, removal of low-quality bases, and PCR duplicate marking using [fastp](https://github.com/OpenGene/fastp).
+    * Mapping-based depletion of host reads utilizing [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2/index.shtml).
+2.  **Taxonomic Quantification:**
+    * Quantifying the abundance of taxa using [KrakenUniq](https://ccb.jhu.edu/software/krakenuniq/) and [Bracken](https://ccb.jhu.edu/software/bracken/) against the [MicrobialDB](https://benlangmead.github.io/aws-indexes/k2_microbial).
+3.  **Functional Annotation Quantification:**
+    * Quantifying functional terms based on KEGG Orthology (KO) using [FMAP](https://fmap.readthedocs.io/en/latest/).
+4.  **Downstream Preparation:**
+    * Removing reads classified as human or synthetic constructs by KrakenUniq from the processed FASTQ files to prepare them for downstream analysis.
+
+### Usage
+
+This pipeline is executed using [Snakemake](https://snakemake.readthedocs.io/en/stable/) and relies on a `config.yaml` file for input parameters:
+
+Under the `params` section, users need to specify:
+
+1.  The path to the input directory containing the raw reads for the metagenomics or metatranscriptomics project (`reads_dir`).
+2.  The desired output directory for the pipeline results (`output`).
+
+The `bin` section specifies the location of the pipeline scripts, and the `ref` section defines the paths to necessary reference files and databases.
+
+```yaml
 params:
   reads_dir: "~/reads/"
   output: "~/pipeline_output/"
-  min_MAG_bp_size: "500"
 
 bin:
-  clustalone: /sysapps/cluster/software/Anaconda3/2022.05/envs/vContact2-0.11.3/bin
-  fmap: ~/db/FMAP
-  krakentools: ~/packages/KrakenTools_v1.2
-  scripts: ~/pipelines/SGSlab_metagenomics/scripts
+  scripts: "~/pipelines/SGSlab_metagenomics/scripts"
+
 ref:
-  host_ref: ~/reference_files/mouse/GCF_000001635.27_GRCm39_genomic.fna
-  card_db: ~/databases/SGSlab_metagenomics/references/card/nucleotide_fasta_protein_variant_model.fasta
-  humann_db: ~/databases/SGSlab_metagenomics/references/humann
-  kraken2_db: ~/databases/kraken2/20220616_hbvae
-  iphop_db: ~/databases/iphop/Sept_2021_pub_rw
-  megares_db: ~/databases/megares_full_database_v2.00.fasta
-  metaphlan_db: ~/databases/SGSlab_metagenomics/references/metaphlan/mpa_vOct22_CHOCOPhlAnSGB_202212
-  viral_nt_db: ~/databases/blast_db/viral.1.1.genomic.fna
+  host_ref: "~/reference_files/mouse/GCF_000001635.27_GRCm39_genomic.fna"
+  kraken2_db: "~/databases/kraken2/20220616_hbvae"
 ```
 
-Under params, the user needs to supply (1) the input directory containing the raw reads for the metagenomics/metatranscriptomics project, (2) an output directory, and (3) the minimum MAG size to be used for downstream MAG-based analyises (recommended 1000 bp for metagenomics studies and 500 bp for metatranscriptomics studies).  
+### Output
 
-For the initial set up of dependencies, the user must provide directories for the included scripts and the ClustalOne, FMAP, and KrakenTools executables. Additionally, reference genomes and databases for the host organism along with the CARD HUMAnN, Kraken2, iPHoP, MEGARes, MetaPhlAn, and viral RefSeq databases must be provided.
+The upstream pipeline generates the following output files:
 
-## Output
+* **Counts Tables:**
+    * Read-level taxonomic classifications generated by [Bracken](https://ccb.jhu.edu/software/bracken/).
+    * Read-level functional annotations at the module, ortholog, and pathway KO levels produced by [FMAP](https://fmap.readthedocs.io/en/latest/).
+* **Annotation Tables:**
+    * A table detailing the taxa identified by [Bracken](https://ccb.jhu.edu/software/bracken/).
 
-The pipeline outputs several files including:
+## Downstream Analysis
 
-1. Counts tables for:  
-  a. Read level taxonomic classifications from *Bracken*  
-  b. Read level functional annotations from *FMAP*  
-  c. Read level antimicrobial gene quantification using CoverM against the *CARD* and *MEGARes* databases  
-  d. Assembled MAGs from *metaSPAdes*  
-  e. Downstream processed viral MAGs from the viral analysis portion of the pipeline  
-2. Annotation tables for:  
-  a. CRISPR repeat and spacers identified in MAGs from *PILER-CR* and *MetaCRAST*  
-  b. Taxonomic information for assembled MAGs from:  
-    -  *VAMB* and *GTDB-Tk*  
-    -  *iPHoP*  
-    -  *BLASTn* with viral RefSeq  
-    -  *vConTACT2* 
+[![image](https://github.com/GhedinSGS/SGSlab_metagenomics/assets/29619358/12df628d-ddd5-47b2-bcef-fab0a922fbd0)](https://github.com/GhedinSGS/SGSlab_metagenomics/assets/29619358/12df628d-ddd5-47b2-bcef-fab0a922fbd0)
+
+### Workflow
+
+The MiCroME downstream analysis pipeline is modular and can be divided into three main sections: **(1) Metagenome-Assembled Genomes (MAG) Analysis**, **(2) Antimicrobial Resistance (AMR) Analysis**, and **(3) Viral Discovery (VirD) Analysis**.
+
+The **MAG analysis** section provides a first pass at MAG characterization, including quantification and taxonomic assignment. The **AMR analysis** section focuses on characterizing the antimicrobial resistance gene profile of the dataset at both the read and MAG levels. The **VirD analysis** section is designed for identifying and annotating MAGs with viral signatures using a suite of viral discovery tools.
+
+#### MAG: General MAG Characterization
+
+1.  **Taxonomic Annotation:**
+    * Annotates MAGs with taxonomic information using [KrakenUniq](https://ccb.jhu.edu/software/krakenuniq/) against the [MicrobialDB](https://benlangmead.github.io/aws-indexes/k2_microbial).
+2.  **Gene Prediction and Annotation:**
+    * Predicts and annotates genes within the MAG sequences using [Prokka](https://github.com/tseemann/prokka) against both bacterial and viral databases.
+3.  **MAG Quantification:**
+    * Quantifies the abundance of each MAG by mapping reads to the MAG sequences using [CoverM](https://github.com/wwood/CoverM).
+
+#### AMR: Antimicrobial Resistance Characterization
+
+1.  **AMR Gene Quantification (Read-Based):**
+    * Quantifies reads that align to antimicrobial resistance genes using the [CARD](https://card.mcmaster.ca/) and [MEGARes](https://megares.meglab.org/) databases.
+2.  **AMR Gene Identification (MAG-Based):**
+    * Screens and identifies antimicrobial resistance genes within the assembled MAGs using [ABRicate](https://github.com/tseemann/abricate), [AMRFinderPlus](https://www.ncbi.nlm.nih.gov/pathogens/amr/), and [DeepARG](https://github.com/gaarangoa/deeparg).
+
+#### VirD: Viral Discovery and Annotation
+
+1.  **DNA and RNA Viral Discovery:**
+    * Identifies DNA and RNA viral sequences from MAGs using [CenoteTaker3](https://github.com/mtisza1/Cenote-Taker3), [VirSorter2](https://github.com/jiess/VirSorter), and [geNomad](https://github.com/esslab/geNomad).
+2.  **DNA Viral Discovery:**
+    * Identifies DNA virus and prophage sequences from MAGs using [CheckV](https://github.com/chklovski/CheckV), [DeepVirFinder](https://github.com/shafferm/DeepVirFinder), [VIBRANT](https://github.com/AnantharamanLab/VIBRANT), and [VirFinder](https://github.com/jessicalu/VirFinder).
+3.  **RNA Viral Discovery:**
+    * Identifies RNA viral sequences from MAGs using [VirBot](https://github.com/cics-bioinformatics/VirBot).
+4.  **RNA Protein-Based Viral Discovery:**
+    * Identifies RNA viral sequences from translated protein-coding sequences from MAGs using [Palmscan](https://github.com/rcedgar/palmscan), [vConTACT3](https://bitbucket.org/MAVERICLab/vcontact3/src/master/), and [NeoRdRp](https://github.com/shoichisakaguchi/NeoRdRp).
+    * Using identified RNA-dependent RNA polymerase sequences (RdRps), performs homology searches using [DIAMOND](https://github.com/bbuchfink/diamond) and multiple sequence alignment with [MUSCLE](https://www.drive5.com/muscle/) to cluster query RdRps against the [palmDB](https://github.com/rcedgar/palmdb).
+
+### Usage
+
+Before running the downstream portion of the pipeline, the following conditions must be met:
+
+1.  The **upstream portion** of the MiCroME pipeline must have been successfully executed on the dataset.
+2.  A **FASTA file of assembled MAGs** must be provided. The assembly method for MAGs depends on the specific study design. For sample-specific analyses, reads are typically assembled individually per sample and then concatenated into a single FASTA file. In contrast, for viral discovery studies, reads from all samples might be cross-assembled and used as input. Common assemblers used include [SPAdes](http://cab.spbu.ru/software/spades/) or [MEGAHIT](https://github.com/voutcn/megahit).
+
+Under the `params` section, users need to provide:
+
+1.  The path to the input directory containing the raw reads for the metagenomics/metatranscriptomics project (`reads_dir`).
+2.  The path to the FASTA file of assembled MAGs (`mags_fasta`).
+3.  The desired output directory for the downstream pipeline results (`output`).
+4.  The minimum MAG size (in base pairs) to be considered for MAG-based analyses (recommended: >600 bp - `min_mag_length`).
+
+Under the `flags` section, users can set boolean values (`T` for True, `F` for False) to determine which sections of the downstream pipeline (`MAG`, `AMR`, and `VirD`) will be executed.
+
+### Output
+
+The downsteam pipeline generates the following output files:
+
+* **Counts Tables:**
+    * Read-level taxonomic classifications generated by *Bracken*.
+    * Read-level functional annotations at the module, ortholog, and pathway KO levels produced by *FMAP*.
+* **Annotation Tables:**
+    * A table detailing the taxa identified by *Bracken*.
+
+```yaml
+params:
+  reads_dir: "~/reads/"
+  mags_fasta: "~/assembly/mags.fasta"
+  output: "~/pipeline_output/"
+  min_mag_length: 600
+
+flags:
+  MAG: True
+  AMR: True
+  VirD: False
+
+ref:
+  scripts: "~/pipelines/SGSlab_metagenomics/scripts"
+  host_ref: "~/reference_files/mouse/GCF_000001635.27_GRCm39_genomic.fna"
+  kraken2_db: "~/databases/kraken2/20220616_hbvae"
+```
 
 ## Credits
 
-(add credits including personal citation)  
-
 ## Citations
 
-The pipeline uses the following tools:  
-
-(add citations)
-
+* **Snakemake:** https://snakemake.readthedocs.io/en/stable/
+* **fastp:** https://github.com/OpenGene/fastp
+* **Bowtie 2:** http://bowtie-bio.sourceforge.net/bowtie2/index.shtml
+* **KrakenUniq:** https://ccb.jhu.edu/software/krakenuniq/
+* **Bracken:** https://ccb.jhu.edu/software/bracken/
+* **FMAP:** https://fmap.readthedocs.io/en/latest/
+* **SPAdes:** http://cab.spbu.ru/software/spades/
+* **MEGAHIT:** https://github.com/voutcn/megahit
+* **Prokka:** https://github.com/tseemann/prokka
+* **CoverM:** https://github.com/wwood/CoverM
+* **CARD:** https://card.mcmaster.ca/
+* **MEGARes:** https://megares.meglab.org/
+* **ABRicate:** https://github.com/tseemann/abricate
+* **AMRFinderPlus:** https://www.ncbi.nlm.nih.gov/pathogens/amr/
+* **DeepARG:** https://github.com/gaarangoa/deeparg
+* **CenoteTaker3:** https://github.com/mtisza1/Cenote-Taker3
+* **VirSorter2:** https://github.com/jiess/VirSorter
+* **geNomad:** https://github.com/esslab/geNomad
+* **CheckV:** https://github.com/chklovski/CheckV
+* **DeepVirFinder:** https://github.com/shafferm/DeepVirFinder
+* **VIBRANT:** https://github.com/AnantharamanLab/VIBRANT
+* **VirFinder:** https://github.com/jessicalu/VirFinder
+* **VirBot:** https://github.com/cics-bioinformatics/VirBot
+* **PalmScan:** https://github.com/rcedgar/palmscan
+* **vConTACT3:** https://bitbucket.org/MAVERICLab/vcontact3/src/master/
+* **NeoRdRp:** https://github.com/shoichisakaguchi/NeoRdRp
+* **DIAMOND:** https://github.com/bbuchfink/diamond
+* **MUSCLE:** https://www.drive5.com/muscle/
+* **palmDB:** https://github.com/rcedgar/palmdb
