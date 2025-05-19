@@ -1,0 +1,13 @@
+---
+params:
+  reads_dir: "/data/lpd_sg/mchung/sasha_mushegian_12/reads/"
+  output: "/data/lpd_sg/mchung/sasha_mushegian_12/pipeline_output/"
+  min_MAG_bp_size: "600"
+  datatype: "metagenome"
+
+bin:
+  fmap: /data/lpd_sg/mchung/leopoldo_segal_01/db/FMAP
+  scripts: /data/lpd_sg/mchung/pipelines/SGSlab_metagenomics/scripts
+ref:
+  host_ref: /data/lpd_sg/mchung/sasha_mushegian_12/references/combined_mosquito_sandfly_mouse_ref.fna
+  kraken_db: /data/lpd_sg/mchung/databases/kraken/20230808_MicrobialDB

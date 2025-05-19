@@ -1,0 +1,276 @@
+# MiCroME Upstream Pipeline
+# Usage: snakemake -j200 -c4 --rerun-incomplete --use-envmodules --latency-wait 300 --cluster "qsub -wd /hpcdata/lpd_sg/mchung/pipelines/SGSlab_metagenomics/stderrout/"
+#
+# Author: Matthew Chung < chungm6@nih.gov >
+# Laboratory of Parasitic Diseases, Systems Genomics Section, NIAID, NIH
+
+configfile: "config.yaml"
+version: "1.20"
+
+# import pandas as pd
+
+# SAMPLE, = glob_wildcards(config["params"]["reads_dir"] + "/{ids}_1.fastq.gz")
+SAMPLE, = glob_wildcards(config["params"]["reads_dir"] + "/{ids}_R1_001.fastq.gz")
+# SAMPLE, = glob_wildcards(config["params"]["reads_dir"] + "/{ids}_R1_001.trimmed.fastq.gz")
+
+SAMPLE = [x for x in SAMPLE if "Undetermined" not in x]
+
+# print(SAMPLE)
+
+wildcard_constraints:
+    sample='|'.join([re.escape(x) for x in SAMPLE]),
+
+rule all:
+    input:
+        config["params"]["output"] + "tables/counts.ko.ortho.fmap.tsv",
+        config["params"]["output"] + "tables/counts.ko.module.fmap.tsv",
+        config["params"]["output"] + "tables/counts.ko.pathway.fmap.tsv",
+        config["params"]["output"] + "tables/counts.taxa.bracken.tsv",
+        config["params"]["output"] + "tables/annotation.taxa.bracken.tsv",
+        expand(config["params"]["output"] + "KrakenTools/{sample}.exclude.s_Homo_sapiens.1.fq.gz",sample=SAMPLE),
+        expand(config["params"]["output"] + "KrakenTools/{sample}.exclude.s_Homo_sapiens.1.fq.gz",sample=SAMPLE)
+
+rule fastp:
+    input:
+        fq1 = config["params"]["reads_dir"] + "{sample}_R1_001.fastq.gz",
+        fq2 = config["params"]["reads_dir"] + "{sample}_R2_001.fastq.gz"
+    output:
+        fq1 = config["params"]["output"] + "fastp/{sample}.1.fq.gz",
+        fq2 = config["params"]["output"] + "fastp/{sample}.2.fq.gz",
+        qcfile = config["params"]["output"] + "fastp/{sample}.html"
+    threads: 8
+    envmodules:
+        "fastp/0.23.4-nlda4xz"
+    shell:
+        """
+        fastp --dedup \
+            -i {input.fq1} -I {input.fq2} \
+            -o {output.fq1} -O {output.fq2} \
+            -h {output.qcfile} -w {threads} \
+        """
+
+rule Bowtie2_deplete_host_reads:
+    input:
+        fq1 = config["params"]["output"] + "fastp/{sample}.1.fq.gz",
+        fq2 = config["params"]["output"] + "fastp/{sample}.2.fq.gz"
+    params:
+        dir = config["params"]["output"] + "Bowtie2/",
+        ref = config["ref"]["host_ref"]
+    output:
+        fq1 = config["params"]["output"] + "Bowtie2/{sample}.exclude.host.1.fq.gz",
+        fq2 = config["params"]["output"] + "Bowtie2/{sample}.exclude.host.2.fq.gz"
+    threads: 8
+    envmodules:
+        "bowtie2/2.5.1-bfbrd2r"
+    shell:
+        """
+        bowtie2 \
+            -p {threads} \
+            -x {params.ref} \
+            -1 {input.fq1} \
+            -2 {input.fq2} \
+            --un-conc-gz {params.dir}/{wildcards.sample} \
+            -S {params.dir}/{wildcards.sample}.sam
+
+        rm {params.dir}/{wildcards.sample}.sam
+
+        mv {params.dir}/{wildcards.sample}.1 {output.fq1}
+        mv {params.dir}/{wildcards.sample}.2 {output.fq2}
+        """
+
+rule KrakenUniq:
+    input:
+        fq1 = config["params"]["output"] + "Bowtie2/{sample}.exclude.host.1.fq.gz",
+        fq2 = config["params"]["output"] + "Bowtie2/{sample}.exclude.host.2.fq.gz"
+    params:
+        db = config["ref"]["kraken_db"]
+    output:
+        kraken_report = config["params"]["output"] + "KrakenUniq/{sample}.report.txt",
+        kraken_output = config["params"]["output"] + "KrakenUniq/{sample}.output.tsv"
+    threads: 8
+    conda:
+        "KrakenUniq_v1.0.4"
+    shell:
+        """
+        if [ $(stat -c %s {input.fq1}) -gt 20 ]
+        then
+            krakenuniq \
+                --db {params.db} \
+                --threads {threads} \
+                --fastq-input \
+                --gzip-compressed \
+                --report-file {output.kraken_report} \
+                --output {output.kraken_output} \
+                 {input.fq1} {input.fq2}
+        else
+            touch {output.kraken_report}
+            touch {output.kraken_output}
+        fi
+        """
+
+rule Bracken:
+    input:
+        fq1 = config["params"]["output"] + "Bowtie2/{sample}.exclude.host.1.fq.gz",
+        fq2 = config["params"]["output"] + "Bowtie2/{sample}.exclude.host.2.fq.gz",
+        kraken_report = config["params"]["output"] + "KrakenUniq/{sample}.report.txt"
+    params:
+        db = config["ref"]["kraken_db"]
+    output:
+        bracken_output = config["params"]["output"] + "Bracken/{sample}.output.txt"
+    envmodules:
+        "bracken/2.8-fngjche"
+    shell:
+        """
+        if [ $(stat -c %s {input.kraken_report}) -gt 0 ]
+        then
+            read_length=$(zcat {input.fq1} {input.fq2} | awk '{{if(NR%4==2) {{count++; bases += length}} }} END{{print bases/count}}'| xargs printf "%.*f\n" 0)
+
+            kmer=$(echo "scale=0; ($read_length / 50) * 50" | bc)
+            if [[ $kmer -lt 50 ]]; then
+                kmer=50
+            elif [[ $kmer -gt 300 ]]; then
+                kmer=300
+            fi
+
+            bracken -d {params.db} -i {input.kraken_report} -o {output.bracken_output} -r $kmer -l S
+        else
+            touch {output.bracken_output}
+        fi
+        """
+
+rule Bracken_create_counts_matrix:
+    input:
+        tsv = expand(config["params"]["output"] + "Bracken/{sample}.output.txt",sample=SAMPLE)
+    params:
+        bin = config["bin"]["scripts"],
+        dir = config["params"]["output"]
+    output:
+        tsv1 = config["params"]["output"] + "tables/counts.taxa.bracken.tsv",
+        tsv2 = config["params"]["output"] + "tables/annotation.taxa.bracken.tsv"
+    threads: 1
+    envmodules:
+        "r/4.3.0-a22xr47"
+    shell:
+        """
+        Rscript {params.bin}/bracken_create_counts_matrix.R -d {params.dir}
+        """
+
+rule KrakenTools:
+    input:
+        fq1 = config["params"]["output"] + "Bowtie2/{sample}.exclude.host.1.fq.gz",
+        fq2 = config["params"]["output"] + "Bowtie2/{sample}.exclude.host.2.fq.gz",
+        kraken_output = config["params"]["output"] + "KrakenUniq/{sample}.output.tsv",
+        kraken_report = config["params"]["output"] + "KrakenUniq/{sample}.report.txt"
+    params:
+        db = config["ref"]["kraken_db"],
+        report = config["params"]["output"] + "KrakenTools/{sample}.report.txt",
+        fq1 = config["params"]["output"] + "KrakenTools/{sample}.exclude.s_Homo_sapiens.1.fq",
+        fq2 = config["params"]["output"] + "KrakenTools/{sample}.exclude.s_Homo_sapiens.2.fq"
+    output:
+        fq1 = config["params"]["output"] + "KrakenTools/{sample}.exclude.s_Homo_sapiens.1.fq.gz",
+        fq2 = config["params"]["output"] + "KrakenTools/{sample}.exclude.s_Homo_sapiens.2.fq.gz"
+    conda:
+        "KrakenTools_v1.2"
+    envmodules:
+        "python/3.7.3-foss-2016b"
+    shell:
+        """
+        if [ $(stat -c %s {input.fq1}) -gt 20 ]
+        then
+            kraken-report --db {params.db} {input.kraken_output} > {params.report}
+
+            rm -f {params.fq1}
+            rm -f {params.fq2}
+
+            zcat {input.fq1} | split -l 120000000 -d - {input.fq1}
+            zcat {input.fq2} | split -l 120000000 -d - {input.fq2}
+
+            cat {input.kraken_output} | split -l 20000000 -d - {input.kraken_output}
+
+            for x in $(ls {input.fq1}[0-9]* | sed "s/.*.1.fq.gz//g" | sort -n)
+            do
+                for y in $(ls {input.kraken_output}[0-9]* | sed "s/.*output.tsv//g"| sort -n)
+                do
+                    extract_kraken_reads.py --exclude --include-children --fastq-output \
+                        -t 9606 32630 \
+                        --max 1000000000 \
+                        -s1 {input.fq1}"$x" \
+                        -s2 {input.fq2}"$x" \
+                        -k {input.kraken_output}"$y" \
+                        -r {params.report} \
+                        -o {params.fq1}"$x"_"$y" \
+                        -o2 {params.fq2}"$x"_"$y"
+
+                    cat {params.fq1}"$x"_"$y" >> {params.fq1}
+                    cat {params.fq2}"$x"_"$y" >> {params.fq2}
+
+                    rm {params.fq1}"$x"_"$y"
+                    rm {params.fq2}"$x"_"$y"
+                done
+                rm {input.fq1}"$x"
+                rm {input.fq2}"$x"
+            done
+
+            rm {input.kraken_output}[0-9]*
+            rm {params.report}
+
+            gzip {params.fq1}
+            gzip {params.fq2}
+        else
+            touch {output.fq1}
+            touch {output.fq2}
+        fi
+        """
+
+
+rule FMAP_mapping:
+    input:
+        fq1 = config["params"]["output"] + "KrakenTools/{sample}.exclude.s_Homo_sapiens.1.fq.gz",
+        fq2 = config["params"]["output"] + "KrakenTools/{sample}.exclude.s_Homo_sapiens.2.fq.gz"
+    params:
+        fmap = config["bin"]["fmap"]
+    output:
+        blastx = config["params"]["output"] + "FMAP/{sample}.blastx_hits.txt"
+    threads: 8
+    envmodules:
+        "diamond/2.1.9-cupiwva"
+    shell:
+        """
+        perl {params.fmap}/FMAP_mapping.pl \
+            -p {threads} \
+            {input.fq1} {input.fq2} > {output.blastx}
+        """
+
+rule FMAP_quantification:
+    input:
+        blastx = config["params"]["output"] + "FMAP/{sample}.blastx_hits.txt"
+    params:
+        fmap = config["bin"]["fmap"]
+    output:
+        abundance = config["params"]["output"] + "FMAP/{sample}.abundance.txt"
+    threads: 1
+    envmodules:
+        "diamond/2.1.9-cupiwva"
+    shell:
+        """
+        perl {params.fmap}/FMAP_quantification.pl {input.blastx} > {output.abundance}
+        """
+
+rule FMAP_create_counts_matrix:
+    input:
+        tsv = expand(config["params"]["output"] + "FMAP/{sample}.abundance.txt",sample=SAMPLE)
+    params:
+        bin = config["bin"]["scripts"],
+        dir1 = config["params"]["output"],
+        dir2 = config["bin"]["fmap"]
+    output:
+        tsv1 = config["params"]["output"] + "tables/counts.ko.ortho.fmap.tsv",
+        tsv2 = config["params"]["output"] + "tables/counts.ko.module.fmap.tsv",
+        tsv3 = config["params"]["output"] + "tables/counts.ko.pathway.fmap.tsv"
+    threads: 1
+    envmodules:
+        "r/4.3.0-a22xr47"
+    shell:
+        """
+        Rscript {params.bin}/fmap_create_counts_matrix.R -d {params.dir1} -f {params.dir2}
+        """
