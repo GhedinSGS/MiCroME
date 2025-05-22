@@ -1,0 +1,553 @@
+# MiCroME Downstream Pipeline
+# Usage: snakemake -j200 -c4 --rerun-incomplete --use-envmodules --latency-wait 300 --cluster "qsub -wd /hpcdata/lpd_sg/mchung/pipelines/SGSlab_metagenomics/stderrout/"
+#
+# Author: Matthew Chung < chungm6@nih.gov >
+# Laboratory of Parasitic Diseases, Systems Genomics Section, NIAID, NIH
+
+configfile: "config.yaml"
+version: "1.00"
+
+SAMPLE, = glob_wildcards(config["params"]["reads_dir"] + "/{ids}.exclude.s_Homo_sapiens.1.fq.gz")
+SAMPLE = [x for x in SAMPLE if "Undetermined" not in x]
+
+wildcard_constraints:
+    sample='|'.join([re.escape(x) for x in SAMPLE]),
+
+rule all:
+    input:
+        ([config["params"]["output"] + "tables/counts.coverM.MAG.tsv"] if config["module"]["MAG"] else []) +
+        ([config["params"]["output"] + "tables/VirD_MiCroME_summary.tsv"] if config["module"]["AMR"] else []) +
+        ([config["params"]["output"] + "tables/AMR_MiCroME_summary.tsv"] if config["module"]["VirD"] else [])
+
+if config["module"]["MAG"] or config["module"]["VirD"]:
+    rule coverM_MAG:
+        input:
+            fq1 = config["params"]["reads_dir"] + "{sample}.exclude.s_Homo_sapiens.1.fq.gz",
+            fq2 = config["params"]["reads_dir"] + "{sample}.exclude.s_Homo_sapiens.2.fq.gz",
+            ref = config["params"]["fasta"]
+        output:
+            tsv = config["params"]["output"] + "coverM/{sample}.MAG.tsv"
+        threads: 8
+        conda:
+            "CoverM_v0.7.0"
+        shell:
+            """
+            if [ $(stat -c %s {input.fq1}) -gt 65 ]
+            then
+                coverm contig \
+                    --methods count \
+                    -1 {input.fq1} -2 {input.fq2} \
+                    --reference {input.ref} \
+                    -t {threads} \
+                    --no-zeros > {output.tsv}
+            else
+                touch {output.tsv}
+            fi
+            """
+
+    rule coverM_MAG_create_counts_matrix:
+        input:
+            fna = expand(config["params"]["output"] + "coverM/{sample}.MAG.tsv",sample=SAMPLE)
+        params:
+            bin = config["bin"]["scripts"],
+            dir = config["params"]["output"]
+        output:
+            tsv = config["params"]["output"] + "tables/counts.coverM."+ config["params"]["name"] + ".tsv",
+        envmodules:
+            "r/4.3.0-a22xr47"
+        shell:
+            """
+            Rscript {params.bin}/coverM_MAG_create_counts_matrix.R -d {params.dir}
+            """
+
+    rule KrakenUniq:
+        input:
+            fa = config["params"]["fasta"]
+        params:
+            db = config["ref"]["kraken_db"],
+            scripts = config["bin"]["scripts"],
+            size = config["params"]["min_size"],
+            txt = config["params"]["output"] + "KrakenUniq/keep_contigs.txt"
+        output:
+            kraken_report = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".report.txt",
+            kraken_output = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".output.tsv",
+            residues = config["params"]["output"] + "tables/" + config["params"]["name"] + ".residues.tsv",
+            fa = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".non_human.fna"
+        threads: 8
+        conda:
+            "KrakenUniq_v1.0.4"
+        envmodules:
+            "samtools/1.17-pdu7bhd"
+        shell:
+            """
+            perl {params.scripts}/residues.pl {input.fa} > {output.residues}
+            awk '$2 >= {params.size} {{print $1}}' {output.residues} > {params.txt}
+            samtools faidx {input.fa} -r {params.txt} -o {output.fa}
+
+            krakenuniq \
+                --db {params.db} \
+                --threads {threads} \
+                --fasta-input \
+                --report-file {output.kraken_report} \
+                --output {output.kraken_output} \
+                {output.fa}
+
+            krakenuniq-extract-reads -a -f -i \
+                -t {params.db} \
+                9606,32630 \
+                {output.kraken_output} {input.fa} > {output.fa}
+
+            perl {params.scripts}/residues.pl {output.fa} > {output.residues}
+            """
+
+    rule Prokka:
+        input:
+            fna = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".non_human.fna"
+        params:
+            dir = config["params"]["output"] + "Prokka/",
+            name = config["params"]["name"]
+        output:
+            faa1 = config["params"]["output"] + "Prokka/bacteria/" + config["params"]["name"] + ".faa",
+            faa2 = config["params"]["output"] + "Prokka/viruses/" + config["params"]["name"] + ".faa",
+            gff1 = config["params"]["output"] + "Prokka/bacteria/" + config["params"]["name"] + ".gff",
+            gff2 = config["params"]["output"] + "Prokka/viruses/" + config["params"]["name"] + ".gff",
+            map1 = config["params"]["output"] + "Prokka/bacteria/" + config["params"]["name"] + ".map",
+            map2 = config["params"]["output"] + "Prokka/viruses/" + config["params"]["name"] + ".map"
+        threads: 8
+        conda:
+            "Prokka_v1.14.6"
+        shell:
+            """
+            prokka --outdir {params.dir}/bacteria --prefix {params.name} --kingdom Bacteria --cpus {threads} --force {input.fna}
+            cat {output.gff1} | grep ^k | awk '{{print $1"\t"$9}}' | sed "s/ID=//g" | sed "s/;.*//g" > {output.map1} 
+            grep "^k" {output.gff1} | grep -v "##" > $(echo -e {output.gff1} | sed "s/.gff$/.filtered.gff/")
+
+            prokka --outdir {params.dir}/viruses --prefix {params.name} --kingdom Viruses --cpus {threads} --force {input.fna}
+            cat {output.gff2} | grep ^k | awk '{{print $1"\t"$9}}' | sed "s/ID=//g" | sed "s/;.*//g" > {output.map2} 
+            grep "^k" {output.gff2} | grep -v "##" > $(echo -e {output.gff2} | sed "s/.gff$/.filtered.gff/")
+            """
+
+if config["module"]["VirD"]:
+    rule CenoteTaker3:
+        input:
+            fna = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".non_human.fna"
+        params:
+            dir = config["params"]["output"] + "CenoteTaker3/",
+            name = config["params"]["name"],
+            size = config["params"]["min_size"]
+        output:
+            tsv = config["params"]["output"] + "CenoteTaker3/" + config["params"]["name"] + "/" + config["params"]["name"] + "_virus_summary.tsv"
+        threads:
+            8
+        conda:
+            "Cenote-Taker_v3.4.0"
+        shell:
+            """
+            cenotetaker3 -c {input.fna} -wd {params.dir} -r {params.name} -p T --minimum_length_circular {params.size} --minimum_length_linear {params.size} -db virion rdrp dnarep -t {threads}
+            """
+
+    rule VirSorter2:
+        input:
+            fna = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".non_human.fna"
+        params:
+            dir = config["params"]["output"] + "VirSorter2/",
+            db = config["ref"]["virsorter2_db"]
+        output:
+            fna = config["params"]["output"] + "VirSorter2/final-viral-combined.fa"
+        threads: 8
+        conda:
+            "VirSorter2_v2.2.4"
+        shell:
+            """
+            virsorter run -i {input.fna} -w {params.dir} --db-dir {params.db} --include-groups dsDNAphage,ssDNA,RNA --keep-original-seq --min-length 600 --rm-tmpdir -j {threads} all
+            """
+
+    rule geNomad:
+        input:
+            fna = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".non_human.fna"
+        params:
+            db = config["ref"]["genomad_db"],
+            dir = config["params"]["output"] + "geNomad/"
+        output:
+            tsv = config["params"]["output"] + "geNomad/" + config["params"]["name"] + ".non_human_summary/" + config["params"]["name"] + ".non_human_virus_summary.tsv"
+        threads: 8
+        conda:
+            "geNomad_v1.8.0"
+        shell:
+            """
+            genomad end-to-end --cleanup --threads {threads} {input.fna} {params.dir} {params.db}
+            """
+
+    rule vConTACT3:
+        input:
+            fna = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".non_human.fna"
+        params:
+            db = config["ref"]["vcontact3_db"],
+            dir1 = config["params"]["output"] + "vConTACT3/eukaryotes",
+            dir2 = config["params"]["output"] + "vConTACT3/prokaryotes"
+        output:
+            csv1 = config["params"]["output"] + "vConTACT3/eukaryotes/genome_support.csv",
+            csv2 = config["params"]["output"] + "vConTACT3/prokaryotes/genome_support.csv"
+        threads: 8
+        conda:
+            "vConTACT_v3.0.0b65"
+        shell:
+            """
+            vcontact3 run -n {input.fna} -o {params.dir1} --db-domain eukaryotes -d {params.db} -t {threads}
+            vcontact3 run -n {input.fna} -o {params.dir2} --db-domain prokaryotes -d {params.db} -t {threads}
+            """
+
+    rule VirFinder:
+        input:
+            fna = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".non_human.fna"
+        params:
+            bin = config["bin"]["virfinder"],
+            dir = config["params"]["output"] + "VirFinder/"
+        output:
+            tsv = config["params"]["output"] + "VirFinder/predResult.tsv"
+        conda:
+            "VirFinder_v1.1"
+        shell:
+            """
+            Rscript {params.bin}/run_virfinder.R -i {input.fna} -o {params.dir}
+        """
+
+    rule DeepVirFinder:
+        input:
+            fna = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".non_human.fna"
+        params:
+            name = config["params"]["name"],
+            deepvirfinder = config["bin"]["deepvirfinder"]
+        output:
+            txt = config["params"]["output"] + "DeepVirFinder/" + config["params"]["name"] + "_gt600bp_dvfpred.txt"
+        threads: 8
+        conda:
+            "DeepVirFinder_v1.0"
+        shell:
+            """
+            python {params.deepvirfinder}/dvf.py -i {input.fna} -m {params.deepvirfinder}/models/ -o $(dirname {output.txt}) -l 600 -c 8
+            mv $(dirname {output.txt})/$(basename {input.fna})_gt600bp_dvfpred.txt {output.txt}
+            """
+
+    rule CheckV:
+        input:
+            fna = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".non_human.fna"
+        params:
+            db = config["ref"]["checkv_db"],
+            dir = config["params"]["output"] + "CheckV/"
+        output:
+            fna = config["params"]["output"] + "CheckV/combined_viruses.fna"
+        threads: 8
+        conda:
+            "CheckV_v1.0.3"
+        shell:
+            """
+            export CHECKVDB={params.db}
+            
+            rm -rf {params.dir}
+            mkdir {params.dir}
+
+            sed "s/[|]/___/g" {input.fna} > {params.dir}/input.fna
+            checkv end_to_end {params.dir}/input.fna {params.dir} -t {threads}
+
+            sed -i "s/___/|/g" {params.dir}/*fna
+            sed -i "s/___/|/g" {params.dir}/*tsv
+            cat {params.dir}/proviruses.fna {params.dir}/viruses.fna > {output.fna}
+            """
+
+    rule VirBot:
+        input:
+            fna = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".non_human.fna"
+        params:
+            dir = config["params"]["output"] + "VirBot/"
+        output:
+            csv = config["params"]["output"] + "VirBot/pos_contig_score.csv"
+        threads: 8
+        conda:
+            "VirBot_v1.0"
+        shell:
+            """
+            rm -r {params.dir}
+            virbot --input {input.fna} --output {params.dir} --threads {threads}
+            """
+
+    rule NeoRdRp:
+        input:
+            faa = config["params"]["output"] + "Prokka/viruses/" + config["params"]["name"] + ".faa"
+        params:
+            hmm = config["ref"]["neordrp_db"]
+        output:
+            tsv = config["params"]["output"] + "NeoRdRp/hmmsearch_results.tsv"
+        threads: 8
+        conda:
+            "NeoRdRp_v2.1"
+        shell:
+            """
+            hmmsearch --tblout {output.tsv} --cpu {threads} {params.hmm} {input.faa} 
+            """
+
+    rule VIBRANT:
+        input:
+            fna = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".non_human.fna"
+        params:
+            db = config["ref"]["vibrant_db"],
+            dir = config["params"]["output"] + "VIBRANT/"
+        output:
+            tsv = config["params"]["output"] + "VIBRANT/VIBRANT_" + config["params"]["name"] + ".non_human/VIBRANT_results_" + config["params"]["name"] + ".non_human/VIBRANT_summary_results_" + config["params"]["name"] + ".non_human.tsv"
+        threads: 4
+        conda:
+            "VIBRANT_v1.2.1"
+        shell:
+            """
+             VIBRANT_run.py -i {input.fna} -folder {params.dir} -d {params.db} -t {threads}
+            """
+
+    rule Palmscan2:
+        input:
+            faa = config["params"]["output"] + "Prokka/viruses/" + config["params"]["name"] + ".faa"
+        output:
+            tsv = config["params"]["output"] + "Palmscan2/" + config["params"]["name"] + ".hits.tsv",
+            fev = config["params"]["output"] + "Palmscan2/" + config["params"]["name"] + ".hits.fev",
+            fasta = config["params"]["output"] + "Palmscan2/" + config["params"]["name"] + ".pp.fasta",
+            core = config["params"]["output"] + "Palmscan2/" + config["params"]["name"] + ".core.fasta",
+            pssms = config["params"]["output"] + "Palmscan2/" + config["params"]["name"] + ".report.txt"
+        threads: 4
+        envmodules:
+            "palmscan/2.0-csnqqxp"
+        shell:
+            """
+            palmscan2 \
+                -search_pssms {input.faa} \
+                -tsv {output.tsv} \
+                -fev {output.fev} \
+                -fasta {output.fasta} \
+                -core {output.core} \
+                -report_pssms {output.pssms}
+            """
+
+    rule DIAMOND:
+        input:
+            faa = config["params"]["output"] + "Palmscan2/" + config["params"]["name"] + ".pp.fasta",
+            tsv = config["params"]["output"] + "Palmscan2/" + config["params"]["name"] + ".hits.tsv",
+        params:
+            db = config["ref"]["palm_db"],
+        output:
+            txt = config["params"]["output"] + "DIAMOND/matches.tsv"
+        threads: 4
+        envmodules:
+            "diamond/2.1.9-cupiwva"
+        shell:
+            """
+            diamond blastp -d {params.db} -q {input.faa} -o {output.txt} --threads {threads}
+            """
+
+    rule MUSCLE:
+        input:
+            faa = config["params"]["output"] + "Palmscan2/" + config["params"]["name"] + ".pp.fasta",
+            txt = config["params"]["output"] + "DIAMOND/matches.tsv"
+        params:
+            db = config["ref"]["palm_db"],
+            dir = config["params"]["output"]
+        output:
+            txt = config["params"]["output"] + "MUSCLE/done.txt"
+        threads: 1
+        envmodules:
+            "samtools/1.21-57fumi7",
+            "muscle/3.8.1551-bteezzq"
+        shell:
+            """
+            IFS=""
+            grep -v Label {input.txt} | cut -f1 | uniq | while read MAG
+            do
+                grep $MAG {input.txt} > {params.dir}/MUSCLE/matches.tsv
+
+                if [ $(wc -l < {params.dir}/MUSCLE/matches.tsv) -ge 10 ]
+                then
+                    mkdir -p {params.dir}/MUSCLE/"$MAG"
+
+                    samtools faidx {input.faa} "$MAG" > {params.dir}/MUSCLE/"$MAG"/input.faa
+
+                    head -n10 {params.dir}/MUSCLE/matches.tsv | cut -f2 > {params.dir}/MUSCLE/"$MAG"/top10matches.txt
+                    samtools faidx {params.db}.fa -r {params.dir}MUSCLE/"$MAG"/top10matches.txt > {params.dir}/MUSCLE/"$MAG"/top10matches.faa
+
+                    cat {params.dir}/MUSCLE/"$MAG"/input.faa {params.dir}/MUSCLE/"$MAG"/top10matches.faa > {params.dir}/MUSCLE/"$MAG"/muscle.faa
+
+                    muscle -in {params.dir}/MUSCLE/"$MAG"/muscle.faa -out {params.dir}/MUSCLE/"$MAG"/msa.afa
+                    muscle -maketree -in {params.dir}/MUSCLE/"$MAG"/msa.afa -out {params.dir}/MUSCLE/"$MAG"/msa.phy -cluster neighborjoining
+                fi
+            done
+            rm {params.dir}/MUSCLE/matches.tsv
+            touch {output.txt}
+            """
+
+    rule VirD_summary:
+        input:
+            CenoteTaker3_output = config["params"]["output"] + "CenoteTaker3/" + config["params"]["name"] + "/" + config["params"]["name"] + "_virus_summary.tsv",
+            CheckV_output = config["params"]["output"] + "CheckV/combined_viruses.fna",
+            DeepVirFinder_output = config["params"]["output"] + "DeepVirFinder/" + config["params"]["name"] + "_gt600bp_dvfpred.txt",
+            VirFinder_output =config["params"]["output"] + "VirFinder/predResult.tsv",
+            VirSorter2_output = config["params"]["output"] + "VirSorter2/final-viral-combined.fa",
+            VirBot_output = config["params"]["output"] + "VirBot/pos_contig_score.csv",
+            NeoRdRp_output = config["params"]["output"] + "NeoRdRp/hmmsearch_results.tsv",
+            geNomad_output = config["params"]["output"] + "geNomad/" + config["params"]["name"] + ".non_human_summary/" + config["params"]["name"] + ".non_human_virus_summary.tsv",
+            VIBRANT_output = config["params"]["output"] + "VIBRANT/VIBRANT_" + config["params"]["name"] + ".non_human/VIBRANT_results_" + config["params"]["name"] + ".non_human/VIBRANT_summary_results_" + config["params"]["name"] + ".non_human.tsv",
+            Palmscan2_output = config["params"]["output"] + "Palmscan2/" + config["params"]["name"] + ".hits.tsv",
+            vConTACT3_euk_output = config["params"]["output"] + "vConTACT3/eukaryotes/genome_support.csv",
+            vConTACT3_prok_output = config["params"]["output"] + "vConTACT3/prokaryotes/genome_support.csv",
+            Prokka_bac_output = config["params"]["output"] + "Prokka/bacteria/" + config["params"]["name"] + ".map",
+            Prokka_vir_output = config["params"]["output"] + "Prokka/viruses/" + config["params"]["name"] + ".map"    
+        params:
+            bin = config["bin"]["scripts"],
+            dir = config["params"]["output"]
+        output:
+            r = config["params"]["output"] + "tables/VirD_MiCroME_summary.Rdata",
+            tsv = config["params"]["output"] + "tables/VirD_MiCroME_summary.tsv"
+        threads: 1
+        envmodules:
+            "r/4.3.0-a22xr47"
+        shell:
+            """
+            Rscript {params.bin}/viral_MAG_summarize.R -d {params.dir}
+            """
+
+if config["module"]["AMR"]:
+    rule coverM_CARD:
+        input:
+            fq1 = config["params"]["reads_dir"] + "{sample}.exclude.s_Homo_sapiens.1.fq.gz",
+            fq2 = config["params"]["reads_dir"] + "{sample}.exclude.s_Homo_sapiens.2.fq.gz",
+            ref = config["ref"]["card_db"]
+        output:
+            tsv = config["params"]["output"] + "coverM/CARD/{sample}.CARD.tsv"
+        threads: 8
+        conda:
+            "CoverM_v0.7.0"
+        shell:
+            """
+            if [ $(stat -c %s {input.fq1}) -gt 65 ]
+            then
+                coverm contig \
+                    --methods count \
+                    -1 {input.fq1} -2 {input.fq2} \
+                    --reference {input.ref} \
+                    -t {threads} \
+                    --no-zeros > {output.tsv}
+            else
+                touch {output.tsv}
+            fi
+            """
+
+    rule CARD_create_counts_matrix:
+        input:
+            fna = expand(config["params"]["output"] + "coverM/{sample}.CARD.tsv",sample=SAMPLE)
+        params:
+            bin = config["bin"]["scripts"],
+            dir = config["params"]["output"]
+        output:
+            tsv = config["params"]["output"] + "tables/counts.coverM.CARD.tsv"
+        envmodules:
+            "r/4.3.0-a22xr47"
+        shell:
+            """
+            Rscript {params.bin}/coverM_CARD_create_counts_matrix.R -d {params.dir}
+            """
+
+    rule coverM_MEGARes:
+        input:
+            fq1 = config["params"]["reads_dir"] + "{sample}.exclude.s_Homo_sapiens.1.fq.gz",
+            fq2 = config["params"]["reads_dir"] + "{sample}.exclude.s_Homo_sapiens.2.fq.gz",
+            ref = config["ref"]["megares_db"]
+        output:
+            tsv = config["params"]["output"] + "coverM/{sample}.MEGARes.tsv"
+        threads: 8
+        conda:
+            "CoverM_v0.7.0"
+        shell:
+            """
+            if [ $(stat -c %s {input.fq1}) -gt 65 ]
+            then
+                coverm contig \
+                    --methods count \
+                    -1 {input.fq1} -2 {input.fq2} \
+                    --reference {input.ref} \
+                    -t {threads} \
+                    --no-zeros > {output.tsv}
+            else
+                touch {output.tsv}
+            fi
+            """
+
+    rule MEGARes_create_counts_matrix:
+        input:
+            fna = expand(config["params"]["output"] + "coverM/{sample}.MEGARes.tsv",sample=SAMPLE)
+        params:
+            bin = config["bin"]["scripts"],
+            dir = config["params"]["output"]
+        output:
+            tsv = config["params"]["output"] + "tables/counts.coverM.MEGARes.tsv"
+        envmodules:
+            "r/4.3.0-a22xr47"
+        shell:
+            """
+            Rscript {params.bin}/coverM_MEGARes_create_counts_matrix.R -d {params.dir}
+            """
+
+    rule AMRFinderPlus:
+        input:
+            fna = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".non_human.fna"
+        output:
+            tsv = config["params"]["output"] + "AMRFinderPlus/"  + config["params"]["name"] +".tsv"
+        threads: 4
+        conda:
+            "AMRFinderPlus_v4.0.23"
+        shell:
+            """
+            amrfinder \
+                --nucleotide {input.fna} \
+                --output {output.tsv} \
+                --threads {threads}
+            """
+
+    rule ABRicate:
+        input:
+            fna = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".non_human.fna"
+        output:
+            tsv = config["params"]["output"] + "ABRicate/"  + config["params"]["name"] +".tsv"
+        threads: 8
+        conda:
+            "ABRicate_v1.0.1"
+        shell:
+            """
+            abricate --threads {threads} {input.fna} > {output.tsv}
+            """
+
+    rule DeepARG:
+        input:
+            fna = config["params"]["output"] + "KrakenUniq/" + config["params"]["name"] + ".non_human.fna"
+        output:
+            tsv = config["params"]["output"] + "DeepARG/"  + config["params"]["name"] +".tsv"
+        threads: 8
+        conda:
+            "DeepARG_v1.0.2"
+        shell:
+            """
+            deeparg predict --model LS --type nucl --input {input.fna} --out {output.tsv}
+            """
+
+    rule AMR_summary:
+        input:
+            ABRicate_output = config["params"]["output"] + "ABRicate/"  + config["params"]["name"] +".tsv",
+            AMRFinderPlus_output = config["params"]["output"] + "AMRFinderPlus/"  + config["params"]["name"] +".tsv",
+            DeepARG_output = config["params"]["output"] + "DeepARG/"  + config["params"]["name"] +".tsv"
+        params:
+            bin = config["bin"]["scripts"],
+            dir = config["params"]["output"]
+        output:
+            r = config["params"]["output"] + "tables/AMR_MiCroME_summary.Rdata",
+            tsv = config["params"]["output"] + "tables/AMR_MiCroME_summary.tsv"
+        threads: 1
+        envmodules:
+            "r/4.3.0-a22xr47"
+        shell:
+            """
+            Rscript {params.bin}/AMR_MiCroME_summarize.R -d {params.dir}
+            """

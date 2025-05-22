@@ -1,0 +1,27 @@
+---
+params:
+  name: "MAG"
+  reads_dir: "/data/lpd_sg/mchung/christina_yek_02/pipeline_output/KrakenTools/"
+  fasta: "/data/lpd_sg/mchung/christina_yek_02/crossassembly/final.contigs.fa"
+  min_size: 600
+  output: "/data/lpd_sg/mchung/christina_yek_02/MiCroME/"
+module:
+  MAG: T
+  AMR: T
+  VirD: T
+bin:
+  deepvirfinder: "/data/lpd_sg/mchung/packages/DeepVirFinder/"
+  virfinder: "/data/lpd_sg/mchung/packages/VirFinder_v1.1/"
+  scripts: /data/lpd_sg/mchung/pipelines/SGSlab_metagenomics/scripts
+
+ref:
+  card_db: /data/lpd_sg/mchung/pipelines/SGSlab_metagenomics/references/card/nucleotide_fasta_protein_variant_model.fasta
+  checkv_db: /data/lpd_sg/mchung/databases/CheckV/checkv-db-v1.5
+  genomad_db: /data/lpd_sg/mchung/databases/geNomad
+  kraken_db: /data/lpd_sg/mchung/databases/kraken/20230808_MicrobialDB
+  megares_db: /data/lpd_sg/mchung/abdoulie_bojang_02/references/megares_full_database_v2.00.fasta
+  neordrp_db: /data/lpd_sg/mchung/databases/NeoRdRp/NeoRdRp.2.1.hmm
+  vcontact3_db: /data/lpd_sg/mchung/databases/vConTACT3/
+  vibrant_db: /data/lpd_sg/mchung/databases/VIBRANT/
+  virsorter2_db: /data/lpd_sg/mchung/databases/VirSorter2/
+  palm_db: /data/lpd_sg/mchung/databases/palmID/2021-03-14/uniques
