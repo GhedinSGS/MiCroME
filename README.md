@@ -55,24 +55,31 @@ The upstream portion of the pipeline encompasses the following key steps:
 
 This pipeline is executed using [Snakemake](https://snakemake.readthedocs.io/en/stable/) and relies on a `config.yaml` file for input parameters:
 
-Under the `params` section, users need to specify:
-
-1.  The path to the input directory containing the raw reads for the metagenomics or metatranscriptomics project (`reads_dir`).
-2.  The desired output directory for the pipeline results (`output`).
-
-The `bin` section specifies the location of the pipeline scripts, and the `ref` section defines the paths to necessary reference files and databases.
+* Under the `params` section:
+  * `reads_dir`: The path to the input directory containing your raw paired-end FASTQ files.
+  * `output`: The desired output directory where all pipeline results will be saved.
+  * `min_MAG_bp_size`: The minimum size (in base pairs) for Metagenome-Assembled Genomes (MAGs) to be considered in downstream analyses (default: `600`).
+  * `datatype`: Specify `metagenome` or `metatranscriptome` for project-specific settings.
+* Under the `bin` section:
+  * `fmap`: The absolute path to the **FMAP** executable or script.
+  * `scripts`: The path to the pipeline's auxiliary scripts (`scripts` directory within the cloned MiCroME repository).
+* Under the `ref` section:
+  * `host_ref`: The path to the FASTA file of your host reference genome (e.g., human, mouse).
+  * `kraken_db`: The path to your pre-built **KrakenUniq** MicrobialDB.
 
 ```yaml
 params:
   reads_dir: "~/reads/"
-  output: "~/pipeline_output/"
+  output: "~/MiCroME/"
+  min_MAG_bp_size: "600"
+  datatype: "metagenome"
 
 bin:
-  scripts: "~/pipelines/SGSlab_metagenomics/scripts"
-
+  fmap: /data/lpd_sg/mchung/leopoldo_segal_01/db/FMAP
+  scripts: ~/scripts
 ref:
-  host_ref: "~/reference_files/mouse/GCF_000001635.27_GRCm39_genomic.fna"
-  kraken2_db: "~/databases/kraken2/20220616_hbvae"
+  host_ref: ~/reference_files/human/chm13v2.0/chm13v2.0.fa
+  kraken_db: ~/databases/kraken/20230808_MicrobialDB
 ```
 
 ### Output
@@ -84,6 +91,10 @@ The upstream pipeline generates the following output files:
     * Read-level functional annotations at the module, ortholog, and pathway KO levels produced by [FMAP](https://fmap.readthedocs.io/en/latest/).
 * **Annotation Tables:**
     * A table detailing the taxa identified by [Bracken](https://ccb.jhu.edu/software/bracken/).
+* **Pipeline Summary**
+    * A html with a first pass analysis of the upsteam MiCroME results.
+
+For an example of the expected output structure and content, please see the [example output file](https://github.com/GhedinSGS/MiCroME/tree/main/upstream/output.html) in our repository.
 
 ## Downstream Analysis
 
@@ -134,12 +145,52 @@ Before running the downstream portion of the pipeline, the following conditions 
 
 Under the `params` section, users need to provide:
 
-1.  The path to the input directory containing the raw reads for the metagenomics/metatranscriptomics project (`reads_dir`).
-2.  The path to the FASTA file of assembled MAGs (`mags_fasta`).
-3.  The desired output directory for the downstream pipeline results (`output`).
-4.  The minimum MAG size (in base pairs) to be considered for MAG-based analyses (recommended: >600 bp - `min_mag_length`).
+  * Under the `params` section:
+      * `name`: A descriptive name for the project or analysis
+      * `reads_dir`: The path to the input directory containing the processed reads from the upstream analysis (e.g., `~/MiCroME/KrakenTools/`).
+      * `fasta`: The path to the FASTA file of assembled MAGs
+      * `min_size`: The minimum MAG size (in base pairs) to be considered for MAG-based analyses (recommended: `600` bp).
+      * `output`: The desired output directory for the downstream pipeline results.
+  * Under the `module` section:
+      * `MAG`: Set to `T` (True) to enable Metagenome-Assembled Genomes (MAG) analysis, or `F` (False) to disable.
+      * `AMR`: Set to `T` (True) to enable Antimicrobial Resistance (AMR) characterization, or `F` (False) to disable.
+      * `VirD`: Set to `T` (True) to enable Viral Discovery (VirD) analysis, or `F` (False) to disable.
+  * Under the `bin` section:
+      * `deepvirfinder`: The path to the **DeepVirFinder** installation directory.
+      * `virfinder`: The path to the **VirFinder** installation directory.
+      * `scripts`: The path to the pipeline's auxiliary scripts (`scripts` directory within the cloned MiCroME repository).
+  * Under the `ref` section:
+      * Paths to various reference databases required for the selected downstream modules (e.g., `card_db`, `checkv_db`, `genomad_db`, `kraken_db`, `megares_db`, `neordrp_db`, `vcontact3_db`, `vibrant_db`, `virsorter2_db`, `palm_db`). Ensure these paths are correctly set to your local database installations.
 
-Under the `flags` section, users can set boolean values (`T` for True, `F` for False) to determine which sections of the downstream pipeline (`MAG`, `AMR`, and `VirD`) will be executed.
+```yaml
+params:
+  name: "MAG"
+  reads_dir: "~/MiCroME/KrakenTools/"
+  fasta: "~/crossassembly/final.contigs.fa"
+  min_size: 600
+  output: "~/MiCroME/"
+module:
+  MAG: T
+  AMR: T
+  VirD: T
+bin:
+  deepvirfinder: ~/packages/DeepVirFinder/
+  virfinder: ~/packages/VirFinder_v1.1/
+  scripts: ~/scripts
+
+ref:
+  card_db: ~/references/card/nucleotide_fasta_protein_variant_model.fasta
+  checkv_db: ~/databases/CheckV/checkv-db-v1.5
+  genomad_db: ~/databases/geNomad
+  iphop_db: ~/databases/iPHoP/Aug_2023_pub_rw
+  kraken_db: ~/databases/kraken/20230808_MicrobialDB
+  megares_db: ~/references/megares_full_database_v2.00.fasta
+  neordrp_db: ~/databases/NeoRdRp/NeoRdRp.2.1.hmm
+  vcontact3_db: ~/databases/vConTACT3/
+  vibrant_db: ~/databases/VIBRANT/
+  virsorter2_db: ~/databases/VirSorter2/
+  palm_db: ~/databases/palmID/2021-03-14/uniques
+```
 
 ### Output
 
@@ -150,24 +201,6 @@ The downsteam pipeline generates the following output files:
     * Read-level functional annotations at the module, ortholog, and pathway KO levels produced by *FMAP*.
 * **Annotation Tables:**
     * A table detailing the taxa identified by *Bracken*.
-
-```yaml
-params:
-  reads_dir: "~/reads/"
-  mags_fasta: "~/assembly/mags.fasta"
-  output: "~/pipeline_output/"
-  min_mag_length: 600
-
-flags:
-  MAG: True
-  AMR: True
-  VirD: False
-
-ref:
-  scripts: "~/pipelines/SGSlab_metagenomics/scripts"
-  host_ref: "~/reference_files/mouse/GCF_000001635.27_GRCm39_genomic.fna"
-  kraken2_db: "~/databases/kraken2/20220616_hbvae"
-```
 
 ## Credits
 
